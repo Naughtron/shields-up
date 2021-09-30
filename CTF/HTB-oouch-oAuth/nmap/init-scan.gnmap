@@ -1,0 +1,4 @@
+# Nmap 7.91 scan initiated Sun Aug 22 09:31:19 2021 as: nmap -sC -sV -oA nmap/init-scan 10.10.10.177
+Host: 10.10.10.177 ()	Status: Up
+Host: 10.10.10.177 ()	Ports: 21/open/tcp//ftp//vsftpd 2.0.8 or later/, 22/open/tcp//ssh//OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)/, 5000/open/tcp//http//nginx 1.14.2/, 8000/open/tcp//rtsp///	Ignored State: closed (996)
+# Nmap done at Sun Aug 22 09:31:39 2021 -- 1 IP address (1 host up) scanned in 19.76 seconds

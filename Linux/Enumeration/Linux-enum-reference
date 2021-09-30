@@ -1,0 +1,97 @@
+You can use explainshell asresource if you want to understand what the commands below are doing: https://explainshell.com/
+
+HIGH PRIORITY: 
+
+Update the box: 
+> sudo apt-get update && apt-get upgrade -y == update and upgrade the box (ubuntu)
+
+Change the root password: 
+> passwd == change current users password
+
+If there are other nessessary users on the box update those passwords as well: 
+> sudo passwd <USERNAME> == change specific users password
+
+Establish a baseline for new files that have been added to the box. 
+1. Run the following command: ls -la /etc/ssh/
+2. In the list of files that is retunred look for "ssh_host_<SOME-VALUE-HERE>" and "ssh_host_<SOME-VALUE-HERE>.pub"
+3. Make note of the dates associated with these files and investigate any files that have been added since this date. 
+4. You can use the following commands as a reference to find files added after a specific date: 
+- find / -newermt "2021-02-12" ! -newermt "2021-02-19" -ls 
+- find / -newermt "2021-02-12" ! -newermt "2021-02-19" -ls 2>/dev/null | grep -v ' /etc\| /var\|.....'
+
+Look for ssh keys: 
+> cd ~/.ssh
+If there are keys present remove them, and regenerate if nessessary. 
+
+General Investigation:
+
+USERS: 
+
+> w == show who is logged on and what they are doing
+
+> sudo -l/etc/sudoers == check users that have permission to sudo
+
+> less /etc/passwd == check users listed in the passwd file
+
+> less /etc/shadow == check users in the shadow file (file contains password information)
+
+
+Check with your team prior to removing users. You can then delete users with the following command: 
+> sudo deluser <USERNAME-HERE> == remove a user from the system
+
+GROUPS:
+> groups == print the groups a user is in
+
+EDGE CASE: if user is part of the docker group this could lead to privesc or be abused by red cell. 
+Notify a member of the team if this is discovered. 
+
+
+Check with your team prior to removing groups from the box. You can delete groups with the following command: 
+sudo delgroup <GROUP-NAME-HERE> == remove a group from the system
+
+NETWORK:
+
+> netstat -a | more == print out all network connections on listening and non-listening sockets
+
+> netstat -nap == view listening ports
+
+> lsof -i == list of processes listening on ports (ref p72 Blue Team Field Manual)
+
+> lsof -nPi | cut -f 1 -d " " | uniq | tail -n +2 == list open files using the network (ref p73 Blue Team Field Manual).
+
+> netstat -nputw
+
+> cat /etc/hosts: Looking for suspicious domains in hosts file for example 127.0.0.1 totallynotahacker.org (ref p37 Blue Team Field Manual)
+
+> sudo iptables --list == list current IPTABLES rules on the box (ref p35 Blue Team Field Manual)
+
+PROCESSES and SERVICES: 
+
+> ps aux == show snapshot of current processes
+
+> ps -aef --forest == report a snapshot of the current processes
+
+> pstree == display a tree of processes
+
+> service --status-all == list all services + is running - is not running
+
+> eval $(process name here) == this will return the process id (PID) of a specific process 
+
+CRONJOBS:
+> crontab -u <USERNAME>-l == list crontab entries by user
+
+> crontab -l == list crontab entries
+
+Look in the /tmp and /opt directories for suspicious files. 
+
+UFW FIREWALL: 
+
+<WIP>
+ufw reference ATTN: If enabled check rules on a regular basis to verify there are not being used to block services we are maintaining.
+
+enable ufw
+configure the firewall for the necessary ports and services on the box
+once configuration is complete review with member of the team
+add configuration information to <out team sheet?>
+enable ?????
+<WIP>

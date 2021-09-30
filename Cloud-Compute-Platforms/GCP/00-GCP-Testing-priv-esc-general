@@ -1,0 +1,174 @@
+Reference article: https://about.gitlab.com/blog/2020/02/12/plundering-gcp-escalating-privileges-in-google-cloud-platform/
+
+PLEASE NOTE: The following notes assume that the attacker has found a way to gain an init foothold into a cloud instance as 
+an unprivileged user. 
+
+Overall Goal: Compromise a Linux based VM running withing GCP compute then elevate local privileges to a root account and 
+attempt to break into other systems within the same project to then break out into other projects.
+This will also include enumerating Google services for secrets and exfiltrate sensitive data. 
+
+Tools: 
+GCP Firewall enum: 
+https://gitlab.com/gitlab-com/gl-security/security-operations/gl-redteam/gcp_firewall_enum
+GCP enum:
+https://gitlab.com/gitlab-com/gl-security/security-operations/gl-redteam/gcp_enum
+GCP misc: 
+https://gitlab.com/gitlab-com/gl-security/security-operations/gl-redteam/gcp_misc 
+
+Working through the guide: 
+
+General: 
+Verify that the GCP tools are available with: 
+
+user@lab-1:~$ gcloud config list
+
+account = <PROJECT-ID>-compute@developer.gserviceaccount.com
+disable_usage_reporting = True
+project = gcp-priv-esc-test
+
+CLOUD APIs: 
+The gcloud tools are just automating API calls. 
+To see what the raw HTTP call looks like add the --log-http to a command 
+
+METADATA ENDPOINT: 
+Each compute instance has access to a metadata server. 
+It can be viewed in your instances hosts file 
+> cat /etc/hosts
+169.254.169.254 metadata.google.internal metadata
+
+The metadata service allows processes running on a compute instance to query for info about the instance it is running on and the project
+it is in. 
+
+No authentication is required to hit the server. Curl example: 
+
+curl "http://metadata.google.internal/computeMetadata/v1/?recursive=true&alt=text" \
+    -H "Metadata-Flavor: Google"
+
+Returns a collection of info about the compute instance that it is run from as expected. 
+
+SECURITY CONCEPTS: 
+What are some things you can do from within a "compromised" instance? 
+
+RESOURCE HIERATCHY: 
+GCP uses a resource hierarchy that is similar to a traditional filesystem. It has a logical parent/child workflow. 
+Example: 
+Organization
+--> Folders
+  --> Projects
+    --> Resources
+
+In the context of these notes I am working on a "compromised" VM and that is considered a Resource.
+You can assume that this resource sits besides other resources like other compute instances and storage buckets.
+
+SERVICE ACCOUNTS: 
+VM instances typically are assigned a service account. Every project has a default serivce account that is assigned to new
+compute instances unless specified. 
+
+To see what accounts are available run: 
+
+user@lab-1:~$ gcloud auth list 
+                  Credentialed Accounts
+ACTIVE  ACCOUNT
+*       <PROJECT-ID>-compute@developer.gserviceaccount.com
+
+Best practice NOTE: A best practice is to configure custom service accounts so you can assign granular permissions per account. 
+
+TESTING NOTE: If you run gcloud auth list and multiple accounts are returned that is an indication that something "interesting" 
+is going on. In general only the service account should be returned. 
+If more that one is returned then you can cycle through them with the following command: 
+
+gcloud config set account [ACCOUNT GOES HERE]
+
+After setting a new account explore what they have access to
+
+ACCESS SCOPES: 
+The service accounts on a GCP compute instance use OAuth to communicat with the cloud APIs. 
+When Access scopes are used (https://cloud.google.com/compute/docs/access/service-accounts#accesscopesiam) the OAuth token that is 
+generated for the instance will have a scope limitation. That limitation defines what API endpoints it can authenticate to, however 
+it does NOT define the actual permissions.
+
+There are three options when setting access scopes on a VM: 
+
+- Allow default access 
+- All full access to all cloud APIs
+- Set access for each API
+
+You can see assigned scopes by querying the metadata server with the following curl command. 
+curl http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/scopes \
+    -H 'Metadata-Flavor:Google'
+
+Example response: 
+https://www.googleapis.com/auth/devstorage.read_only
+https://www.googleapis.com/auth/logging.write
+https://www.googleapis.com/auth/monitoring.write
+https://www.googleapis.com/auth/servicecontrol
+https://www.googleapis.com/auth/service.management.readonly
+https://www.googleapis.com/auth/trace.append
+
+TESTING NOTE: 
+?Of the default scopes returned in the above list devstorage.read_only is the most interesting. 
+devstorage.read_only grants read access to ALL storage buckets in the project. 
+
+NOTE: If there are no scope limitations you will only see https://www.googleapis.com/auth/cloud-platform returned. 
+If cloud-platform is returned it allows authentication to any API function. 
+
+It is reccomended that only nessessary permissions are chosen. Do not reply on access scopes as a barrier to an API endpoint. 
+
+IDENTITY AND ACCESS MANAGEMENT (IAM):
+GCP offeres fine grained control over permissions, permissions are bundled together into three types of basic roles as well. 
+
+Primitive roles: Owner, Editor, Viewer: The default service account in every project is assigned the Editor role.
+
+Predefined roles: These are roles managed by Google and are meant to be combinations of common scenarios. 
+TESTING NOTE: If the compute.instanceAdmin role is present this allows for priv esc. 
+
+Custom roles: Allows admins to set their own permissions. 
+
+Roles in GCP are connected to a member [either a user or service account] in what is called a binding (https://cloud.google.com/iam/docs/reference/rest/v1/Policy#binding)
+That binding is then applied to a level of the GCP hierarchy with a policy. 
+
+The following curl commands can be used to enumerate roles assigned to a service account: 
+
+user@lab-1:~$ PROJECT=$(curl http://metadata.google.internal/computeMetadata/v1/project/project-id \
+>     -H "Metadata-Flavor: Google" -s)
+user@lab-1:~$ ACCOUNT=$(curl http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/defau
+lt/email \
+>     -H "Metadata-Flavor: Google" -s)
+user@lab-1:~$ gcloud projects get-iam-policy $PROJECT  \
+>     --flatten="bindings[].members" \
+>     --format='table(bindings.role)' \
+>     --filter="bindings.members:$ACCOUNT"
+
+In my case I was denied access "...does not have per
+mission to access projects instance..."
+
+TESTING NOTE: If access is denied this is not the end of the road. 
+
+Another way to get roles assigned project wide is to run the following command: 
+gcloud projects get-iam-policy [PROJECT-ID]
+
+To see the IAM policy associated with a single compute instance 
+gcloud compute instances get-iam-policy [INSTANCE] --zone [ZONE]
+
+DEFAULT CREDS: 
+
+The metadata server that is available to a given instance will provide any user or process on that instance with an OAuth token
+that is used as the default credentials when talking with the Google APIs via the gcloud commands. 
+
+You can pull and inspect the token with the following curl command. 
+
+curl "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+    -H "Metadata-Flavor: Google"
+
+The token that is returned is a combo of the service account and access scopes assigned to the compute instance. Even if a service 
+account has all the privileges this OAuth token might be limited in the APIs it can talk to due to access scope. 
+
+APPLICATION DEFAULT CREDS: 
+An alternative to pulling a token from the metadata service is to use Application Default Credentials (https://cloud.google.com/docs/authentication/production)
+When using one of Googles GCP client libs the code will go searching for creds to use in a defined order. 
+
+1. The first location it will check will be the source code itself. In this case a dev would point to a static service key file. 
+2. Next it will look in env vars check "env" to see if GOOGLE_APPLICATION_CREDENTIALS are listed. 
+3. Last the application will use the default token provided by the metadata server. 
+
+The best outcome is that you find the actual JSON file with the service account credentials. 

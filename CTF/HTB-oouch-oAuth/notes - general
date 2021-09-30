@@ -1,0 +1,48 @@
+1. Run an nmap scan of the box 
+nmap -sC -sV -oA nmap/init-scan 10.10.10.177
+-sC == run default scripts 
+-sV == enumerate version info if able
+-oA == output scan results in all formats
+
+Results: 
+21/tcp   open  ftp     vsftpd 2.0.8 or later <-----this is a very old version. 
+22/tcp   open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+5000/tcp open  http    nginx 1.14.2
+8000/tcp open  rtsp    One of the headers indicates "Authorization"
+
+2. See if I can pull anything off the FTP server
+┌──(kali㉿kali)-[~/shields-up/CTF/HTB-oouch-oAuth/ftp]
+└─$ ftp 10.10.10.177
+Connected to 10.10.10.177.
+220 qtc's development server
+Name (10.10.10.177:kali): anonymous
+230 Login successful.
+Remote system type is UNIX.
+Using binary mode to transfer files.
+ftp> 
+
+NOTE: "qtc's dev server" possible username adding it to creds file
+
+ftp> dir -a
+200 PORT command successful. Consider using PASV.
+150 Here comes the directory listing.
+drwxr-xr-x    2 ftp      ftp          4096 Feb 11  2020 .
+drwxr-xr-x    2 ftp      ftp          4096 Feb 11  2020 ..
+-rw-r--r--    1 ftp      ftp            49 Feb 11  2020 project.txt
+
+Downloading project.txt
+ftp> get project.txt
+
+It lists the following information: 
+Flask -> Consumer
+Django -> Authorization Server
+
+NOTE: the terms "consumer" and "Authorization" are common terms in oAuth.
+
+3. Inspecting the webpages on 5000 and 8000
+8000 == bad Request
+5000 == signin page 
+
+Looking at the page source for 5000 the only interesting thing is a CSRF token. 
+notes for the consumer are in notes-consumer-5000 and notes for the Authorization are in notes-auth-8000
+

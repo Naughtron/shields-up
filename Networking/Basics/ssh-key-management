@@ -1,0 +1,42 @@
+### SSH BASICS ### 
+
+A bashic ssh connection using a password would be: 
+$ssh <username>@<ipaddress>
+***prompt for password here*** 
+
+Passing ssh keys and not using passwords is more secure. 
+$ ssh -i <name of key file> <server-username>@<ipaddress>
+
+When it comes to administration of servers the first time you log in you will be prompted asking if you 
+want to connected. Say yes to this. 
+
+When you say yes to this prompt the ip address you are contacting is added to a list of known hosts
+
+### GENERATE SSH KEY PAIRS ### 
+
+TO generate a set of keys use t he following command: 
+$ ssh-keygen -t ed25519 
+-t == type
+ed25519 == a more secure key type than the default
+
+Following the command there will be the following prompts: 
+Enter file in which to save the key (/home/kali/.ssh/id_ed25519): == this is the default storage location for the keys
+Enter passphrase (empty for no passphrase): == you can add a password here to make it more secure
+
+There will now be a public/private keypair in the .ssh dir
+
+The .pub is the public key. This is the key you can share or send to other servers. 
+The other is the private key and this should NEVER be shared. 
+
+
+### HOW TO PASS KEYS TO SERVERS ###
+$ ssh-copy-id -i <name of keyfile> <server-username>@<ip of server>
+-i == include file
+
+Verify that the public key is in place on the remote server's .ssh directory and look in the authorized_keys file
+
+### HOW TO USE KEYS TO CONNECT TO SERVERS ### 
+
+Now you can connect to the server by just using 
+$ ssh <server-username>@<servier-ip>                                                                                                                                                      255 ⨯
+Enter passphrase for key '/home/kali/.ssh/id_ed25519': <passphrase to the key here>
